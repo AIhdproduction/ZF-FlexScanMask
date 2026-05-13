@@ -1,0 +1,23 @@
+# Z+F FlexScanMask – Python dependencies
+# Installation via start.bat (automatic)
+
+customtkinter>=5.2.0
+opencv-python>=4.8.0
+Pillow>=10.0.0
+numpy>=1.24.0,<2.0.0
+huggingface_hub>=0.23.0
+piexif>=1.1.3
+einops
+pycocotools
+triton-windows
+psutil
+
+# PyTorch with CUDA – installed by start.bat:
+#   pip install torch==2.10.0 torchvision --index-url https://download.pytorch.org/whl/cu128
+#
+# SAM3 – installed by start.bat:
+#   pip install git+https://github.com/facebookresearch/sam3.git
+#
+# SAM3 checkpoint – HuggingFace access required:
+#   huggingface-cli login
+#   huggingface-cli download facebook/sam3

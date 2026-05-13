@@ -1,0 +1,36 @@
+# Virtual environment
+venv/
+
+# SAM3 model checkpoint (~7 GB - download via start.bat)
+checkpoints/
+
+# Setup flag
+.setup_complete
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Output folders
+FlexScanMask_Output/
+*_masked.*
+
+# Test / sample data
+PanoFilterung/
+test/
+
+# Windows
+Thumbs.db
+desktop.ini
+
+# HuggingFace cache
+.cache/
+
+# IDE
+.vscode/
+.idea/
+*.code-workspace

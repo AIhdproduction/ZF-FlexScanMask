@@ -1,0 +1,110 @@
+MIT License with Commons Clause
+
+Copyright (c) 2026 AIhdproduction
+https://github.com/AIhdproduction/ZF-FlexScanMask
+
+-------------------------------------------------------------------------------
+COMMONS CLAUSE (Restriction on Commercial Use)
+-------------------------------------------------------------------------------
+
+The Software is provided to you by the Licensor under the License, as defined
+below, subject to the following condition:
+
+Without limiting other conditions in the License, the grant of rights under
+the License will not include, and the License does not grant to you, the right
+to Sell the Software or to use the Software as part of a commercial product
+or service offered to third parties.
+
+For purposes of the foregoing, "Sell" means practicing any or all of the
+rights granted to you under the License to provide to third parties, for a
+fee or other consideration (including without limitation fees for hosting
+or consulting/support services related to the Software), a product or service
+whose value derives, entirely or substantially, from the functionality of the
+Software.
+
+In addition, the following uses are explicitly considered commercial use and
+require a separate written agreement with the author:
+
+  (a) Using the Software to process, anonymize, or transform images, videos,
+      or other data as part of a paid service, contract, or commission —
+      regardless of whether the Software itself is sold or only its output.
+
+  (b) Using the output of the Software (e.g. anonymized images) as part of a
+      product or dataset that is sold, licensed, or otherwise monetized by a
+      company or individual acting in a commercial capacity.
+
+  (c) Integrating the Software into any internal business workflow where the
+      processing of data with the Software directly contributes to revenue
+      generation, billable work, or commercial deliverables.
+
+COMMERCIAL USE REQUIRES A SEPARATE WRITTEN AGREEMENT WITH THE AUTHOR.
+To obtain a commercial license, please contact:
+  GitHub: https://github.com/AIhdproduction/ZF-FlexScanMask/issues
+
+Any commercial license granted will be at the sole discretion of the author
+and may involve a one-time fee, a subscription, or other arrangement agreed
+upon by both parties.
+
+-------------------------------------------------------------------------------
+MIT LICENSE (Base License — applies to all non-commercial use)
+-------------------------------------------------------------------------------
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or use
+copies of the Software for non-commercial purposes, and to permit persons to
+whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice, the Commons Clause above, and this permission
+notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+-------------------------------------------------------------------------------
+WHAT IS ALLOWED (non-commercial use)
+-------------------------------------------------------------------------------
+
+  ✔  Personal use and private projects
+  ✔  Academic research and education
+  ✔  Non-profit organizations
+  ✔  Evaluation and testing
+  ✔  Modification and redistribution — provided this license is retained
+
+WHAT REQUIRES A COMMERCIAL LICENSE (contact the author)
+-------------------------------------------------------------------------------
+
+  ✘  Using this software as part of a paid product or service
+  ✘  Offering anonymization as a commercial service (SaaS, API, etc.)
+  ✘  Integrating into a commercial application sold or licensed to customers
+  ✘  Using within a company to process data as part of a revenue-generating workflow
+
+-------------------------------------------------------------------------------
+THIRD-PARTY COMPONENT LICENSES
+-------------------------------------------------------------------------------
+
+ZF-FlexScanMask integrates the following third-party components. These
+components retain their own licenses and are NOT subject to the Commons Clause
+above. Only the ZF-FlexScanMask application code itself is covered by this
+license.
+
+  - SAM 3 (Meta)              Apache License 2.0
+                               https://github.com/facebookresearch/sam3/blob/main/LICENSE
+  - OpenCV                    Apache License 2.0
+                               https://github.com/opencv/opencv/blob/master/LICENSE
+  - PyTorch                   BSD 3-Clause License
+                               https://github.com/pytorch/pytorch/blob/main/LICENSE
+  - Pillow                    HPND License
+                               https://github.com/python-pillow/Pillow/blob/main/LICENSE
+  - customtkinter             MIT License
+                               https://github.com/TomSchimansky/CustomTkinter/blob/master/LICENSE
+  - huggingface_hub           Apache License 2.0
+                               https://github.com/huggingface/huggingface_hub/blob/main/LICENSE
+
+-------------------------------------------------------------------------------
