@@ -77,6 +77,11 @@ def pad_mask(mask: np.ndarray, pad: float = PADDING_FRACTION) -> np.ndarray:
     return cv2.dilate(mask, kernel, iterations=1)
 
 
+def fill_region_black(image: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    image[mask > 0] = 0
+    return image
+
+
 def blur_region(image: np.ndarray, mask: np.ndarray) -> np.ndarray:
     ys, xs = np.where(mask > 0)
     if len(ys) == 0:
@@ -125,8 +130,9 @@ def rotate_mask_180(mask: np.ndarray) -> np.ndarray:
 # ──────────────────────────────────────────────────────────────
 
 class Processor:
-    def __init__(self, msg_queue: queue.Queue):
+    def __init__(self, msg_queue: queue.Queue, mode: str = "blur"):
         self.msg_queue   = msg_queue
+        self.mode        = mode  # "blur" or "black"
         self.sam3_proc   = None
         self.sam3_loaded = False
         self._stop_event = threading.Event()
@@ -330,14 +336,19 @@ class Processor:
                 self._log(f"  [WARN] Hard mask not found: {mask_path.name}")
 
         if not all_masks:
-            self._log("  No regions to blur - saving original.")
+            self._log("  No regions to anonymize - saving original.")
         else:
-            # Step 5: Combine all masks and blur on original-orientation image
+            # Step 5: Combine all masks and anonymize on original-orientation image
             combined = np.zeros((h, w), dtype=np.uint8)
             for m in all_masks:
                 combined = np.maximum(combined, m)
-            cv_img = blur_region(cv_img, combined)
-            self._log(f"  Blurred {int(np.count_nonzero(combined)):,} px total")
+            px = int(np.count_nonzero(combined))
+            if self.mode == "black":
+                cv_img = fill_region_black(cv_img, combined)
+                self._log(f"  Filled black {px:,} px total")
+            else:
+                cv_img = blur_region(cv_img, combined)
+                self._log(f"  Blurred {px:,} px total")
 
         # Step 6: Save
         ext = img_path.suffix.lower()
@@ -357,7 +368,8 @@ class Processor:
         return True
 
     # ── Main run loop ────────────────────────────────────────
-    def run(self, input_paths: list[Path], output_dir: Path):
+    def run(self, input_paths: list[Path], output_dir: Path, mode: str = "blur"):
+        self.mode = mode
         if not self._load_sam3():
             self._done(False)
             return
@@ -412,6 +424,7 @@ class FlexScanMaskApp(ctk.CTk):
         self._processor:     Processor | None = None
         self._proc_thread:   threading.Thread | None = None
         self._msg_queue:     queue.Queue = queue.Queue()
+        self._anon_mode:     str = "blur"
 
         self._build_ui()
         self.after(100, self._poll_queue)
@@ -485,6 +498,27 @@ class FlexScanMaskApp(ctk.CTk):
                     else f"Mask {cam_label}: {mask_path.name} NOT found"
             ctk.CTkLabel(main, text=text, text_color=color,
                          font=ctk.CTkFont(size=12)).pack(anchor="w", padx=16, pady=(3, 0))
+
+        # Anonymization mode
+        mode_frame = ctk.CTkFrame(main, fg_color="transparent")
+        mode_frame.pack(fill="x", padx=16, pady=(10, 0))
+        ctk.CTkLabel(
+            mode_frame, text="Anonymization mode:",
+            text_color=A["text_secondary"],
+        ).pack(side="left", padx=(0, 10))
+        self.seg_mode = ctk.CTkSegmentedButton(
+            mode_frame,
+            values=["Blur", "Black fill"],
+            command=self._on_mode_change,
+            fg_color=A["accent"],
+            selected_color=A["highlight"],
+            selected_hover_color="#a02840",
+            unselected_color=A["accent"],
+            unselected_hover_color=A["fg_color_primary"],
+            text_color=A["text_primary"],
+        )
+        self.seg_mode.set("Blur")
+        self.seg_mode.pack(side="left")
 
         # Progress
         prog_frame = ctk.CTkFrame(main, fg_color="transparent")
@@ -568,6 +602,9 @@ class FlexScanMaskApp(ctk.CTk):
                 text_color=APPEARANCE["text_secondary"],
             )
 
+    def _on_mode_change(self, value: str):
+        self._anon_mode = "black" if value == "Black fill" else "blur"
+
     def _pick_output(self):
         folder = filedialog.askdirectory(title="Select output folder")
         if folder:
@@ -596,10 +633,10 @@ class FlexScanMaskApp(ctk.CTk):
         self.btn_start.configure(state="disabled")
         self.btn_stop.configure(state="normal")
 
-        self._processor  = Processor(self._msg_queue)
+        self._processor  = Processor(self._msg_queue, mode=self._anon_mode)
         self._proc_thread = threading.Thread(
             target=self._processor.run,
-            args=(self._input_paths, self._output_dir),
+            args=(self._input_paths, self._output_dir, self._anon_mode),
             daemon=True,
         )
         self._proc_thread.start()
