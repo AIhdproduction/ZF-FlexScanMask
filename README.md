@@ -8,13 +8,17 @@ Automatically detects and blurs persons and license plates using SAM3 (Segment A
 
 ## Examples
 
-**cam\_0** — scanner head (bottom) and persons blurred:
+### cam\_0 — scanner head + persons
 
-![cam_0 example](asset/cam_0_250003999.jpg)
+| Blur | Black fill |
+|------|------------|
+| ![cam_0 blur](asset/cam_0_250003999_blur.jpg) | ![cam_0 black](asset/cam_0_250003999_black.jpg) |
 
-**cam\_1** — persons and license plates blurred:
+### cam\_1 — persons + license plates
 
-![cam_1 example](asset/cam_1_250003999.jpg)
+| Blur | Black fill |
+|------|------------|
+| ![cam_1 blur](asset/cam_1_250003999_blur.jpg) | ![cam_1 black](asset/cam_1_250003999_black.jpg) |
 
 ---
 
