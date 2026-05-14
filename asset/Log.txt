@@ -1,0 +1,41 @@
+[LOAD] Loading SAM3 ...
+[OK] SAM3 loaded.
+[INFO] SAM3 confidence: 0.20
+[OK] Mask found: cam_0 search - mask_cam_0.png
+[OK] Mask found: cam_0 fallback - cam0_scanner_mask.png
+[OK] Mask found: cam_1 search - mask_cam_1.png
+[OK] Mask found: cam_1 fallback - cam1_scanner_mask.png
+>> cam_0_250003999.jpg
+  Running SAM3 (global) ...
+  SAM3 set_image: 0.3s
+  'person': 0 detections
+  'license plate': 0 detections
+  SAM3 total: 0.5s
+  SAM3 global: 0 mask(s) in 0.6s
+  Running SAM3 (scanner: blue device) ...
+  SAM3 scanner crop: 4504x4504 px
+  SAM3 set_image: 0.1s
+  'blue device': mask 273,917 px score=0.75
+  'blue device' time: 0.3s
+  SAM3 total: 0.4s
+  SAM3 scanner: 1 mask(s) in 0.6s
+  Fallback mask: cam_0 (708,921 px)
+  Blurred 709,216 px total in 0.5s
+  Save time: 0.0s
+  Saved: cam_0_250003999.jpg (2.0s)
+>> cam_1_250003999.jpg
+  Running SAM3 (global) ...
+  SAM3 set_image: 0.1s
+  'person': mask 152,023 px score=0.94
+  'person': mask 1,113,739 px score=0.90
+  'person': mask 5,735 px score=0.24
+  'person' time: 0.7s
+  'license plate': 0 detections
+  SAM3 total: 0.8s
+  SAM3 global: 3 mask(s) in 0.9s
+  Fallback mask: cam_1 (325,315 px)
+  Blurred 1,683,579 px total in 0.7s
+  Save time: 0.0s
+  Saved: cam_1_250003999.jpg (1.9s)
+Done. All 2 file(s) processed.
+

@@ -6,7 +6,7 @@ Pipeline per image:
   1. Rotate 180 degrees
   2. SAM3 text-prompt search: person, license plate (on rotated image)
   3. Rotate image and SAM masks back to original orientation
-  4. Load camera-specific hard mask (cam0_scanner_mask.png or cam1_scanner_mask.png)
+  4. Load camera-specific hard mask (mask/cam_0 or mask/cam_1)
   5. Combine hard mask + SAM masks
   6. Blur all combined regions on the original-orientation image
   7. Save
@@ -35,14 +35,35 @@ from PIL import Image
 # ──────────────────────────────────────────────────────────────
 IMAGE_EXTENSIONS   = {".jpg", ".jpeg", ".png", ".tiff", ".tif", ".bmp", ".webp", ".jfif"}
 SAM3_CHECKPOINT_DIR  = Path(__file__).parent / "checkpoints" / "sam3"
-HARD_MASK_CAM0_PATH  = Path(__file__).parent / "cam0_scanner_mask.png"
-HARD_MASK_CAM1_PATH  = Path(__file__).parent / "cam1_scanner_mask.png"
-AUTO_OUTPUT_NAME     = "FlexScanMask_Output"
-APP_VERSION         = "1.0"
+MASK_DIR             = Path(__file__).parent / "mask"
 
-SAM3_CONFIDENCE    = 0.15
+# Suchregion-Masken: schwarz = hier soll SAM gezielt nach Scanner suchen
+SEARCH_REGION_CAM0  = MASK_DIR / "mask_cam_0.png"
+SEARCH_REGION_CAM1  = MASK_DIR / "mask_cam_1.png"
+
+# Feste Fallback-Masken: werden am Ende mit SAM-Ergebnissen verschmolzen
+FALLBACK_MASK_CAM0  = MASK_DIR / "cam0_scanner_mask.png"
+FALLBACK_MASK_CAM1  = MASK_DIR / "cam1_scanner_mask.png"
+
+AUTO_OUTPUT_NAME     = "FlexScanMask_Output"
+APP_VERSION         = "1.1"
+
+SAM3_CONFIDENCE    = 0.20
 SAM3_MIN_MASK_PX   = 500
-SAM3_PROMPTS       = ["person", "license plate"]
+
+# Prompts pro Kamera
+# global: auf dem ganzen Bild suchen (nach 180-Grad-Rotation)
+# scanner: nur im Suchbereich der Suchregion-Maske suchen (auf Original-Orientierung)
+SAM3_CAMERA_PROMPTS = {
+    "cam_0": {
+        "global": ["person", "license plate"],
+        "scanner": ["blue device"],
+    },
+    "cam_1": {
+        "global": ["person", "license plate"],
+        "scanner": [],
+    },
+}
 BLUR_KERNEL_BASE   = 101
 BLUR_PASSES        = 3
 QUANTIZE_STEP      = 8
@@ -74,6 +95,13 @@ def pad_mask(mask: np.ndarray, pad: float = PADDING_FRACTION) -> np.ndarray:
     k = max(3, int(min(h_ext, w_ext) * pad))
     k = k if k % 2 == 1 else k + 1
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
+    return cv2.dilate(mask, kernel, iterations=1)
+
+
+def dilate_mask_fixed(mask: np.ndarray, kernel_size: int = 31) -> np.ndarray:
+    kernel_size = max(3, kernel_size)
+    kernel_size = kernel_size if kernel_size % 2 == 1 else kernel_size + 1
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
     return cv2.dilate(mask, kernel, iterations=1)
 
 
@@ -219,7 +247,12 @@ class Processor:
             return False
 
     # ── SAM3 segmentation on one image ───────────────────────
-    def _run_sam3(self, cv_image: np.ndarray) -> list[np.ndarray]:
+    def _run_sam3(
+        self,
+        cv_image: np.ndarray,
+        prompts: list[str],
+        max_masks_per_prompt: int | None = None,
+    ) -> list[np.ndarray]:
         import torch
         h, w = cv_image.shape[:2]
         masks: list[np.ndarray] = []
@@ -227,15 +260,19 @@ class Processor:
         rgb     = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
         pil_img = Image.fromarray(rgb)
 
+        t_total = time.perf_counter()
         try:
+            t_set_image = time.perf_counter()
             state = self.sam3_proc.set_image(pil_img)
+            self._log(f"  SAM3 set_image: {time.perf_counter() - t_set_image:.1f}s")
         except Exception as exc:
             self._log(f"  [ERROR] SAM3 set_image: {exc}")
             return masks
 
         covered = np.zeros((h, w), dtype=np.uint8)
 
-        for prompt in SAM3_PROMPTS:
+        for prompt in prompts:
+            t_prompt = time.perf_counter()
             try:
                 self.sam3_proc.reset_all_prompts(state)
                 result = self.sam3_proc.set_text_prompt(prompt, state)
@@ -256,7 +293,12 @@ class Processor:
                 scores = scores.cpu().numpy()
 
             found = 0
-            for i, m in enumerate(raw):
+            indices = range(len(raw))
+            if scores is not None:
+                indices = sorted(indices, key=lambda idx: float(scores[idx]), reverse=True)
+
+            for i in indices:
+                m = raw[i]
                 if m.ndim == 4:   m = m[0, 0]
                 elif m.ndim == 3: m = m[0]
                 if m.shape != (h, w):
@@ -279,15 +321,58 @@ class Processor:
                 masks.append(padded)
                 covered = np.maximum(covered, padded)
                 found += 1
+                if max_masks_per_prompt is not None and found >= max_masks_per_prompt:
+                    break
 
             if found == 0:
                 self._log(f"  '{prompt}': 0 detections")
+            self._log(f"  '{prompt}' time: {time.perf_counter() - t_prompt:.1f}s")
 
         del state
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
+        self._log(f"  SAM3 total: {time.perf_counter() - t_total:.1f}s")
         return masks
+
+    # ── SAM3 segmentation restricted to a mask region ───────
+    def _run_sam3_masked(
+        self,
+        cv_image: np.ndarray,
+        prompts: list[str],
+        hard_mask: np.ndarray,
+    ) -> list[np.ndarray]:
+        """Run SAM3 only on the crop covered by hard_mask, then map masks back."""
+        if hard_mask is None or not np.any(hard_mask):
+            return []
+
+        mask_region = dilate_mask_fixed(hard_mask, kernel_size=31)
+        ys, xs = np.where(mask_region > 0)
+        if len(ys) == 0:
+            return []
+
+        y_min, y_max = int(ys.min()), int(ys.max())
+        x_min, x_max = int(xs.min()), int(xs.max())
+
+        crop = cv_image[y_min:y_max + 1, x_min:x_max + 1]
+        self._log(f"  SAM3 scanner crop: {crop.shape[1]}x{crop.shape[0]} px")
+        sam_masks = self._run_sam3(crop, prompts, max_masks_per_prompt=1)
+        if not sam_masks:
+            return []
+
+        restricted = []
+        for m in sam_masks:
+            full_mask = np.zeros(hard_mask.shape, dtype=np.uint8)
+            full_mask[y_min:y_max + 1, x_min:x_max + 1] = m
+            clipped = cv2.bitwise_and(full_mask, mask_region)
+            if np.count_nonzero(clipped) >= SAM3_MIN_MASK_PX:
+                restricted.append(clipped)
+            elif np.count_nonzero(full_mask) >= SAM3_MIN_MASK_PX:
+                overlap = np.count_nonzero(np.bitwise_and(full_mask, hard_mask))
+                if overlap > SAM3_MIN_MASK_PX // 2:
+                    restricted.append(clipped)
+
+        return restricted
 
     # ── Process one image ────────────────────────────────────
     def _process_image(
@@ -305,52 +390,77 @@ class Processor:
 
         h, w = cv_img.shape[:2]
 
+        # Detect camera type
+        name_lower = img_path.name.lower()
+        cam_type = None
+        for ct in ("cam_0", "cam_1"):
+            if name_lower.startswith(ct):
+                cam_type = ct
+                break
+
+        # Get camera-specific prompts
+        cam_config = SAM3_CAMERA_PROMPTS.get(cam_type, {
+            "global": ["person", "license plate"],
+            "scanner": [],
+        })
+
+        all_masks: list[np.ndarray] = []
+
         # Step 1: Rotate 180 for SAM3 (person upright, scanner at bottom)
         cv_rotated = cv2.rotate(cv_img, cv2.ROTATE_180)
 
-        # Step 2: SAM3 on rotated image
-        self._log("  Running SAM3 ...")
-        sam_masks_rotated = self._run_sam3(cv_rotated)
+        # Step 2: SAM3 global prompts on rotated image
+        if cam_config["global"]:
+            t_global = time.perf_counter()
+            self._log("  Running SAM3 (global) ...")
+            sam_masks_rotated = self._run_sam3(cv_rotated, cam_config["global"])
+            sam_masks = [rotate_mask_180(m) for m in sam_masks_rotated]
+            self._log(f"  SAM3 global: {len(sam_masks)} mask(s) in {time.perf_counter() - t_global:.1f}s")
+            all_masks.extend(sam_masks)
 
-        # Step 3: Rotate SAM masks back to original orientation
-        sam_masks = [rotate_mask_180(m) for m in sam_masks_rotated]
-        self._log(f"  SAM3: {len(sam_masks)} mask(s)")
+        # Step 3: Load search region mask (black = where SAM should look for scanner)
+        search_region = None
+        if cam_type == "cam_0":
+            search_region = load_hard_mask(SEARCH_REGION_CAM0, h, w)
+        elif cam_type == "cam_1":
+            search_region = load_hard_mask(SEARCH_REGION_CAM1, h, w)
 
-        # Step 4: Load camera-specific hard mask (original orientation)
-        name_lower = img_path.name.lower()
-        if name_lower.startswith("cam_0"):
-            mask_path = HARD_MASK_CAM0_PATH
-        elif name_lower.startswith("cam_1"):
-            mask_path = HARD_MASK_CAM1_PATH
-        else:
-            mask_path = None
+        # Step 4: SAM3 scanner search on original image (restricted to search region)
+        if search_region is not None and cam_config["scanner"]:
+            t_scanner = time.perf_counter()
+            self._log(f"  Running SAM3 (scanner: {', '.join(cam_config['scanner'])}) ...")
+            scanner_masks = self._run_sam3_masked(cv_img, cam_config["scanner"], search_region)
+            self._log(f"  SAM3 scanner: {len(scanner_masks)} mask(s) in {time.perf_counter() - t_scanner:.1f}s")
+            all_masks.extend(scanner_masks)
 
-        all_masks: list[np.ndarray] = list(sam_masks)
-
-        if mask_path is not None:
-            hard = load_hard_mask(mask_path, h, w)
-            if hard is not None:
-                all_masks.append(hard)
-                self._log(f"  Hard mask: {mask_path.name} ({int(np.count_nonzero(hard)):,} px)")
-            else:
-                self._log(f"  [WARN] Hard mask not found: {mask_path.name}")
+        # Step 5: Load fallback mask and merge
+        fallback = None
+        if cam_type == "cam_0":
+            fallback = load_hard_mask(FALLBACK_MASK_CAM0, h, w)
+        elif cam_type == "cam_1":
+            fallback = load_hard_mask(FALLBACK_MASK_CAM1, h, w)
+        if fallback is not None:
+            all_masks.append(fallback)
+            self._log(f"  Fallback mask: {cam_type} ({int(np.count_nonzero(fallback)):,} px)")
 
         if not all_masks:
             self._log("  No regions to anonymize - saving original.")
         else:
-            # Step 5: Combine all masks and anonymize on original-orientation image
+            # Step 6: Combine all masks and anonymize on original-orientation image
             combined = np.zeros((h, w), dtype=np.uint8)
             for m in all_masks:
                 combined = np.maximum(combined, m)
             px = int(np.count_nonzero(combined))
             if self.mode == "black":
+                t_anonymize = time.perf_counter()
                 cv_img = fill_region_black(cv_img, combined)
-                self._log(f"  Filled black {px:,} px total")
+                self._log(f"  Filled black {px:,} px total in {time.perf_counter() - t_anonymize:.1f}s")
             else:
+                t_anonymize = time.perf_counter()
                 cv_img = blur_region(cv_img, combined)
-                self._log(f"  Blurred {px:,} px total")
+                self._log(f"  Blurred {px:,} px total in {time.perf_counter() - t_anonymize:.1f}s")
 
-        # Step 6: Save
+        # Step 7: Save
         ext = img_path.suffix.lower()
         out_name = img_path.stem + (ext if ext != ".jfif" else ".jpg")
         out_path = output_dir / out_name
@@ -361,25 +471,34 @@ class Processor:
         elif ext == ".png":
             encode_params = [cv2.IMWRITE_PNG_COMPRESSION, 1]
 
+        t_save = time.perf_counter()
         cv2.imwrite(str(out_path), cv_img, encode_params)
+        self._log(f"  Save time: {time.perf_counter() - t_save:.1f}s")
 
         dt = time.perf_counter() - t0
         self._log(f"  Saved: {out_name} ({dt:.1f}s)")
         return True
 
     # ── Main run loop ────────────────────────────────────────
-    def run(self, input_paths: list[Path], output_dir: Path, mode: str = "blur"):
+    def run(self, input_paths: list[Path], output_dir: Path, mode: str = "blur", confidence: float = SAM3_CONFIDENCE):
         self.mode = mode
         if not self._load_sam3():
             self._done(False)
             return
+        self.sam3_proc.confidence_threshold = confidence
+        self._log(f"[INFO] SAM3 confidence: {confidence:.2f}")
 
         # Log mask status once at start
-        for path, label in [(HARD_MASK_CAM0_PATH, "cam_0"), (HARD_MASK_CAM1_PATH, "cam_1")]:
+        for path, label in [
+            (SEARCH_REGION_CAM0, "cam_0 search"),
+            (FALLBACK_MASK_CAM0, "cam_0 fallback"),
+            (SEARCH_REGION_CAM1, "cam_1 search"),
+            (FALLBACK_MASK_CAM1, "cam_1 fallback"),
+        ]:
             if path.exists():
-                self._log(f"[OK] Hard mask found: {path.name}")
+                self._log(f"[OK] Mask found: {label} - {path.name}")
             else:
-                self._log(f"[WARN] Hard mask missing: {path.name}")
+                self._log(f"[WARN] Mask missing: {label} - {path.name}")
 
         total  = len(input_paths)
         failed = 0
@@ -425,6 +544,7 @@ class FlexScanMaskApp(ctk.CTk):
         self._proc_thread:   threading.Thread | None = None
         self._msg_queue:     queue.Queue = queue.Queue()
         self._anon_mode:     str = "blur"
+        self._sam_confidence: float = SAM3_CONFIDENCE
 
         self._build_ui()
         self.after(100, self._poll_queue)
@@ -491,12 +611,20 @@ class FlexScanMaskApp(ctk.CTk):
             command=self._pick_output,
         ).pack(side="right")
 
-        # Hard mask status
-        for mask_path, cam_label in [(HARD_MASK_CAM0_PATH, "cam_0"), (HARD_MASK_CAM1_PATH, "cam_1")]:
-            color = A["success"] if mask_path.exists() else A["warning"]
-            text  = f"Mask {cam_label}: {mask_path.name} found" if mask_path.exists() \
-                    else f"Mask {cam_label}: {mask_path.name} NOT found"
-            ctk.CTkLabel(main, text=text, text_color=color,
+        # Mask status
+        all_mask_paths = [
+            SEARCH_REGION_CAM0, FALLBACK_MASK_CAM0,
+            SEARCH_REGION_CAM1, FALLBACK_MASK_CAM1,
+        ]
+        found = sum(1 for p in all_mask_paths if p.exists())
+        total = len(all_mask_paths)
+        if found == total:
+            ctk.CTkLabel(main, text=f"Masks: {found}/{total} found",
+                         text_color=A["success"],
+                         font=ctk.CTkFont(size=12)).pack(anchor="w", padx=16, pady=(3, 0))
+        else:
+            ctk.CTkLabel(main, text=f"Masks: {found}/{total} found",
+                         text_color=A["warning"],
                          font=ctk.CTkFont(size=12)).pack(anchor="w", padx=16, pady=(3, 0))
 
         # Anonymization mode
@@ -519,6 +647,30 @@ class FlexScanMaskApp(ctk.CTk):
         )
         self.seg_mode.set("Blur")
         self.seg_mode.pack(side="left")
+
+        # SAM3 confidence slider
+        conf_frame = ctk.CTkFrame(main, fg_color="transparent")
+        conf_frame.pack(fill="x", padx=16, pady=(8, 0))
+        ctk.CTkLabel(
+            conf_frame, text="SAM confidence:",
+            text_color=A["text_secondary"],
+        ).pack(side="left", padx=(0, 10))
+        self.lbl_confidence = ctk.CTkLabel(
+            conf_frame, text=f"{SAM3_CONFIDENCE:.2f}",
+            text_color=A["text_primary"], width=36,
+        )
+        self.lbl_confidence.pack(side="right")
+        self.slider_confidence = ctk.CTkSlider(
+            conf_frame,
+            from_=0.05, to=0.90, number_of_steps=17,
+            command=self._on_confidence_change,
+            fg_color=A["accent"],
+            progress_color=A["highlight"],
+            button_color=A["highlight"],
+            button_hover_color="#a02840",
+        )
+        self.slider_confidence.set(SAM3_CONFIDENCE)
+        self.slider_confidence.pack(side="left", fill="x", expand=True)
 
         # Progress
         prog_frame = ctk.CTkFrame(main, fg_color="transparent")
@@ -605,6 +757,10 @@ class FlexScanMaskApp(ctk.CTk):
     def _on_mode_change(self, value: str):
         self._anon_mode = "black" if value == "Black fill" else "blur"
 
+    def _on_confidence_change(self, value: float):
+        self._sam_confidence = round(value, 2)
+        self.lbl_confidence.configure(text=f"{self._sam_confidence:.2f}")
+
     def _pick_output(self):
         folder = filedialog.askdirectory(title="Select output folder")
         if folder:
@@ -636,7 +792,7 @@ class FlexScanMaskApp(ctk.CTk):
         self._processor  = Processor(self._msg_queue, mode=self._anon_mode)
         self._proc_thread = threading.Thread(
             target=self._processor.run,
-            args=(self._input_paths, self._output_dir, self._anon_mode),
+            args=(self._input_paths, self._output_dir, self._anon_mode, self._sam_confidence),
             daemon=True,
         )
         self._proc_thread.start()
