@@ -10,7 +10,7 @@ On a modern NVIDIA GPU, expect roughly **2-5 seconds per image** after the model
 
 ## Examples
 
-### cam_0 - scanner head + persons
+### cam_0 - scanner head + persons + license plates
 
 | Blur | Black fill |
 |------|------------|
